@@ -1,0 +1,204 @@
+Client script
+Here are the **client-side scripts** separated from the client-side (browser) in ERPNext:
+
+### **1. Employee List Settings (List View Script)**
+```javascript
+frappe.listview_settings['Employee'] = {
+    onload: function(listview) {
+        console.log(frappe.session.user);
+        listview.page.add_inner_button('Filter My Entries', function() {
+            // Filter based on ownership of the logged-in user
+            listview.filter_area.add([["Employee", "owner", "=", frappe.session.user]]);
+            listview.refresh();
+        });
+
+        // Apply the filter on page load
+        listview.filter_area.add([["Employee", "owner", "=", frappe.session.user]]);
+        listview.refresh();
+
+        if(frappe.session.user == 'onedata@admin.com'){
+            listview.page.wrapper.find('.filter-area').hide();
+            listview.page.wrapper.find('.filter-button').hide();
+            listview.page.wrapper.find('.filter-x-button').hide();
+        }
+    }
+};
+```
+
+### **2. Employee Self Edit (Form Script)**
+```javascript
+frappe.ui.form.on('Employee', {
+    setup: function(frm) {
+        frappe.call({
+            method: "frappe.client.get_value",
+            args: {
+                doctype: "User",
+                filters: { "name": frappe.session.user },
+                fieldname: "roles"
+            },
+            callback: function(response) {
+                if (response.message) {
+                    let roles = response.message.roles;
+                    if (roles.includes("onedata") && !roles.includes("HR Manager")) {
+                        frm.set_query("name", function() {
+                            return {
+                                filters: { "owner": frappe.session.user }
+                            };
+                        });
+                    }
+                }
+            }
+        });
+    }
+});
+```
+
+### **3. Event Mail (Form Script)**
+```javascript
+frappe.ui.form.on("Event", {
+    refresh: function (frm) {
+        frm.add_custom_button("Send Reminder Now", function () {
+            frappe.call({
+                method: "frappe.core.doctype.communication.email.make",
+                args: {
+                    recipients: frm.doc.owner,
+                    subject: `Reminder: Upcoming Event ${frm.doc.name}`,
+                    content: `Your event '${frm.doc.name}' is scheduled soon. Don't forget to attend!`
+                },
+                callback: function () {
+                    frappe.msgprint("Reminder Sent Successfully!");
+                }
+            });
+        });
+        
+        frm.add_custom_button("Send Notification", function () {
+            frappe.call({
+                method: "erpnext.send_notification.send_notification",
+                args: {
+                    event_name: frm.doc.name,
+                    recipient: frm.doc.owner
+                },
+                callback: function () {
+                    frappe.msgprint("Reminder sent as an in-app notification!");
+                }
+            });
+        });
+    }
+});
+```
+
+### **4. Event Test Trigger Notification (Form Script)**
+```javascript
+frappe.ui.form.on('Event', {
+    refresh(frm) {
+        if (frm.doc.enable_custom_schedule) {
+            frm.add_custom_button(__('Trigger Reminders'), function () {
+                frappe.call({
+                    method: "your_custom_app.notifications.create_custom_schedule",
+                    args: {
+                        event_name: frm.doc.name
+                    },
+                    callback: function(response) {
+                        frappe.msgprint(__('Event reminders have been triggered.'));
+                    }
+                });
+            });
+        }
+    }
+});
+```
+
+### **5. Lead Convert to Customer (List View Script)**
+```javascript
+frappe.listview_settings['Lead'] = {
+    onload: function (listview) {
+        listview.page.add_action_item(__('Convert to Customer'), function () {
+            let selected = listview.get_checked_items().map(d => d.name); // Get selected lead names
+            if (selected.length === 0) {
+                frappe.msgprint(__('Please select at least one Lead.'));
+                return;
+            }
+
+            frappe.call({
+                method: "erpnext.onedata.bulk_convert_leads_to_customers",
+                args: { leads: JSON.stringify(selected) },
+                callback: function (r) {
+                    if (r.message) {
+                        let successCount = r.message.success.length;
+                        let errorCount = r.message.errors.length;
+
+                        frappe.msgprint(`${successCount} Leads converted to Customers.`);
+                        if (errorCount > 0) {
+                            frappe.msgprint(`Errors: ${r.message.errors.join(", ")}`);
+                        }
+
+                        listview.refresh(); // Refresh the list view
+                    }
+                }
+            });
+        });
+    }
+};
+```
+
+### **6. Lead Number Restrict (Form Script)**
+```javascript
+frappe.ui.form.on("Lead", {
+    validate: function(frm) {
+        let phone = (frm.doc.phone || "").trim();
+        if (!phone.startsWith("+")) {
+            frappe.msgprint({
+                title: "Invalid Phone Number",
+                message: "Phone number must start with a '+' followed by the country code.",
+                indicator: "red"
+            });
+            frappe.validated = false;
+            return;
+        }
+
+        let digitsOnly = phone.replace(/\D/g, "");
+        if (digitsOnly.length < 8 || digitsOnly.length > 15) {
+            frappe.msgprint({
+                title: "Invalid Phone Number",
+                message: "Phone number must be between 8 to 15 digits (excluding the '+').",
+                indicator: "red"
+            });
+            frappe.validated = false;
+        }
+    }
+});
+```
+
+### **7. Weather Data Fetch (List View Script)**
+```javascript
+frappe.listview_settings['Weather Data'] = {
+    onload: function(listview) {
+        // Ensure the button is only added once
+        if (!listview.fetch_weather_button) {
+            listview.fetch_weather_button = listview.page.add_button('Fetch Weather', function() {
+                frappe.call({
+                    method: "erpnext.weather_data.fetch_weather",
+                    callback: function(response) {
+                        if (response.message) {
+                            frappe.msgprint({
+                                title: "Weather Data Updated",
+                                message: "Weather data has been successfully fetched!",
+                                indicator: "green"
+                            });
+                            listview.refresh();
+                        } else {
+                            frappe.msgprint({
+                                title: "Error",
+                                message: "Failed to fetch weather data. Please check logs.",
+                                indicator: "red"
+                            });
+                        }
+                    }
+                });
+            });
+
+            listview.fetch_weather_button.addClass("btn-primary"); // Highlight the button
+        }
+    }
+};
+```
